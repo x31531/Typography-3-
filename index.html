@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>복합 구조 오디오 반응 아트 - 마이크 OFF 시 무음 표시</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/addons/p5.sound.min.js"></script>
+
+  <style>
+    @font-face {
+      font-family: 'OnulSamhwa';
+      src: url('OnulSamhwagothic-Regular.otf') format('opentype');
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    #controls {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 2000;
+    }
+
+    #controls button {
+      font-family: 'OnulSamhwa', sans-serif;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 20px;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      cursor: pointer;
+      transition: background 0.25s, transform 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #controls button:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+    }
+    #controls button.active {
+      background: rgba(255, 255, 255, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      transform: scale(0.95);
+    }
+
+    #toggleMic img {
+      max-width: 24px;
+      max-height: 24px;
+      width: auto;
+      height: auto;
+      display: block;
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;overflow:hidden;">
+
+<div id="controls">
+  <button id="toggleTrail">누적 ON/OFF</button>
+  <button id="clearScreen">클리어</button>
+  <!-- 마이크 버튼 -->
+  <button id="toggleMic">
+    <img src="mic-on.png" alt="Mic On Icon" id="micIcon">
+  </button>
+</div>
+
+<script>
+let mic, fft;
+let micEnabled = true;   // 마이크 초기 상태 ON
+let trailMode  = false;
+
+let prevAmp = 0, sustainW = 0, sustainCounter = 0;
+let time = 0, noiseOffset = 0, centroid = 0;
+let circleOffsetY = 0, lineOffsetY = 0, symbolAlpha = 255;
+let smoothHighEnergy = 0, directionSmooth = 1;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  noFill();
+
+  mic = new p5.AudioIn();
+  mic.start();
+  fft = new p5.FFT(0.8, 2048);
+  fft.setInput(mic);
+  colorMode(RGB, 255);
+
+  const trailBtn = document.getElementById("toggleTrail");
+  const clearBtn = document.getElementById("clearScreen");
+  const micBtn   = document.getElementById("toggleMic");
+  const micIcon  = document.getElementById("micIcon");
+
+  function updateMicVisual() {
+    if (micEnabled) {
+      micIcon.src = "mic-on.png";
+      micIcon.alt = "Mic On Icon";
+      micBtn.classList.add("active");
+    } else {
+      micIcon.src = "mic-off.png";
+      micIcon.alt = "Mic Off Icon";
+      micBtn.classList.remove("active");
+    }
+  }
+  updateMicVisual();
+
+  // 누적 모드
+  trailBtn.addEventListener("click", () => {
+    trailMode = !trailMode;
+    trailBtn.classList.toggle("active", trailMode);
+  });
+
+  // 마이크 ON/OFF
+  micBtn.addEventListener("click", () => {
+    micEnabled = !micEnabled;
+    if (micEnabled) {
+      mic.start();
+      fft.setInput(mic);
+    } else {
+      mic.stop();  // 마이크 완전히 꺼짐
+    }
+    updateMicVisual();
+  });
+
+  // 클리어
+  clearBtn.addEventListener("click", () => background(0));
+}
+
+function draw() {
+  if (!trailMode) background(0);
+
+  time += 0.01;
+  noiseOffset += 0.005;
+
+  let smoothedAmp, silent;
+
+  if (!micEnabled) {
+    // ★ 마이크 OFF: 완전 무음 강제
+    smoothedAmp = 0;
+    silent = true;
+  } else {
+    // 오디오 분석
+    let spectrum = fft.analyze();
+    let nyquist = sampleRate() / 2;
+    centroid = 0;
+    let totalEnergy = 0;
+    for (let i = 0; i < spectrum.length; i++) {
+      let freq = (i / spectrum.length) * nyquist;
+      let energy = spectrum[i];
+      centroid += freq * energy;
+      totalEnergy += energy;
+    }
+    if (totalEnergy > 0) centroid /= totalEnergy;
+
+    let level = mic.getLevel();
+    let amp = map(level, 0, 0.1, 0, 600);
+    amp = constrain(amp, 0, 255);
+    smoothedAmp = lerp(prevAmp, amp, 0.1);
+    prevAmp = smoothedAmp;
+
+    silent = smoothedAmp < 5;
+  }
+
+  let targetCircleY = silent ? -150 : 0;
+  let targetLineY   = silent ? 150  : 0;
+  circleOffsetY = lerp(circleOffsetY, targetCircleY, 0.05);
+  lineOffsetY   = lerp(lineOffsetY,   targetLineY,   0.05);
+  let targetAlpha  = silent ? 255 : 0;
+  symbolAlpha = lerp(symbolAlpha, targetAlpha, 0.05);
+
+  // 스펙트럼 기반 추가 변수 (마이크가 꺼져있으면 모두 0)
+  let bassEnergy = micEnabled ? fft.getEnergy(20, 250) : 0;
+  let midEnergy  = micEnabled ? fft.getEnergy(250, 2000) : 0;
+  let rawHigh    = micEnabled ? fft.getEnergy(500, 8000) : 0;
+  smoothHighEnergy = lerp(smoothHighEnergy, rawHigh, 0.3);
+
+  let spacing   = map(smoothedAmp, 0, 255, 0, 60);
+  let numShapes = floor(map(smoothedAmp, 0, 255, 3, 12));
+
+  if (numShapes > 3) {
+    sustainCounter++;
+    if (sustainCounter > 60) sustainW = min(sustainW + 2.5, 600);
+  } else {
+    sustainCounter = 0;
+    sustainW = lerp(sustainW, 0, 0.05);
+  }
+
+  translate(width/2, height/2);
+
+  // 무음 시 기호
+  if (symbolAlpha > 1) {
+    stroke(255, symbolAlpha);
+    strokeWeight(2);
+    ellipse(0, circleOffsetY, 80, 80);
+    line(-100, lineOffsetY, 100, lineOffsetY);
+  }
+
+  if (!(!silent && symbolAlpha < 5)) return;
+
+  function drawComplexPattern(isTop = true) {
+    let targetDirection = (bassEnergy > smoothHighEnergy) ? 1 : -1;
+    directionSmooth = lerp(directionSmooth, targetDirection, 0.05);
+    let maxRot = map(smoothedAmp, 0, 255, 0, PI/1.2);
+
+    for (let i = 0; i < numShapes; i++) {
+      let t = i / (numShapes - 1);
+      let y = i * spacing;
+      let rot = map(t, 0, 1, 0, maxRot) * directionSmooth;
+
+      push();
+      translate(0, isTop ? -y : -y);
+      rotate(isTop ? -rot : rot);
+      let sustainFactor = pow(1 - t, 1.5);
+      let sustainEffect = sustainW * sustainFactor;
+
+      let w = lerp(width * 0.15, 80, t) + sustainEffect;
+      let h = lerp(1, 80, t);
+
+      let mainAlpha = map(midEnergy, 0, 255, 10, 60);
+      stroke(255, mainAlpha);
+      strokeWeight(map(t, 0, 1, 0.5, 2));
+      ellipse(0, 0, w, h);
+
+      if (smoothHighEnergy > 20) {
+        let detailCount = floor(map(smoothHighEnergy, 20, 255, 2, 6));
+        for (let j = 0; j < detailCount; j++) {
+          let detailT = j / detailCount;
+          let detailW = w * (0.2 + detailT * 0.6);
+          let detailH = h * (0.2 + detailT * 0.6);
+          stroke(255, map(smoothHighEnergy, 20, 255, 15, 50));
+          strokeWeight(0.5 + j * 0.3);
+          ellipse(0, 0, detailW, detailH);
+        }
+      }
+
+      if (smoothedAmp > 50) {
+        stroke(255, map(smoothedAmp, 50, 255, 10, 40));
+        strokeWeight(0.3);
+        beginShape();
+        for (let angle = 0; angle < TWO_PI; angle += 0.2) {
+          let noiseVal = noise(
+            cos(angle)*0.01 + noiseOffset + i*0.1,
+            sin(angle)*0.01 + noiseOffset + i*0.1,
+            time*0.5
+          );
+          let radius = (w/2) * (0.8 + noiseVal * 0.4);
+          vertex(cos(angle)*radius, sin(angle)*radius * (h/w));
+        }
+        endShape(CLOSE);
+      }
+
+      if (bassEnergy > 30) {
+        stroke(255, map(bassEnergy, 30, 255, 8, 40));
+        strokeWeight(map(t, 0, 1, 0.2, 1));
+        let extend = map(bassEnergy, 30, 255, 1.1, 1.4);
+        ellipse(0, 0, w * extend, h * 0.3);
+        ellipse(0, 0, w * 0.3, h * extend);
+      }
+
+      if (smoothedAmp > 80) {
+        let particleCount = floor(map(smoothedAmp, 80, 255, 3, 12));
+        for (let p = 0; p < particleCount; p++) {
+          let particleAngle = (TWO_PI / particleCount) * p + time * 2;
+          let particleRadius = w/2 * (0.6 + sin(time * 3 + p) * 0.2);
+          stroke(255, 60);
+          strokeWeight(1.5 + sin(time * 4 + p) * 0.8);
+          point(cos(particleAngle)*particleRadius,
+                sin(particleAngle)*particleRadius * (h/w));
+        }
+      }
+      pop();
+    }
+  }
+
+  drawComplexPattern(true);
+  scale(1, -1);
+  drawComplexPattern(false);
+}
+</script>
+</body>
+</html>
