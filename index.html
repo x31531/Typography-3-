@@ -2,7 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>복합 구조 오디오 반응 아트 - 마이크 OFF 시 무음 표시</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>복합 구조 오디오 반응 아트 - 버튼 동일 크기</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/addons/p5.sound.min.js"></script>
 
@@ -16,22 +18,24 @@
 
     #controls {
       position: fixed;
-      top: 10px;
-      left: 10px;
+      top: 12px;
+      left: 12px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       z-index: 2000;
     }
 
+    /* ★ 세 버튼 모두 고정 크기 */
     #controls button {
       font-family: 'OnulSamhwa', sans-serif;
-      padding: 4px 10px;
-      font-size: 12px;
+      width: 120px;           /* 가로 고정 */
+      height: 36px;           /* 세로 고정 */
+      font-size: 14px;
       color: #fff;
       background: rgba(255, 255, 255, 0.15);
       border: 1px solid rgba(255, 255, 255, 0.3);
-      border-radius: 20px;
+      border-radius: 18px;
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       cursor: pointer;
@@ -50,29 +54,34 @@
       transform: scale(0.95);
     }
 
+    /* 마이크 아이콘은 버튼 높이에 맞춰 */
     #toggleMic img {
-      max-width: 24px;
-      max-height: 24px;
+      height: 20px;           /* 버튼 높이 안에서 동일 비율 */
       width: auto;
-      height: auto;
       display: block;
     }
+
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas { display: block; }
   </style>
 </head>
-<body style="margin:0;padding:0;overflow:hidden;">
+<body>
 
 <div id="controls">
   <button id="toggleTrail">누적 ON/OFF</button>
   <button id="clearScreen">클리어</button>
-  <!-- 마이크 버튼 -->
-  <button id="toggleMic">
-    <img src="mic-on.png" alt="Mic On Icon" id="micIcon">
-  </button>
+  <button id="toggleMic"><img src="mic-on.png" alt="Mic On Icon" id="micIcon"></button>
 </div>
 
 <script>
 let mic, fft;
-let micEnabled = true;   // 마이크 초기 상태 ON
+let micEnabled = true;
 let trailMode  = false;
 
 let prevAmp = 0, sustainW = 0, sustainCounter = 0;
@@ -98,37 +107,30 @@ function setup() {
   function updateMicVisual() {
     if (micEnabled) {
       micIcon.src = "mic-on.png";
-      micIcon.alt = "Mic On Icon";
       micBtn.classList.add("active");
     } else {
       micIcon.src = "mic-off.png";
-      micIcon.alt = "Mic Off Icon";
       micBtn.classList.remove("active");
     }
   }
   updateMicVisual();
 
-  // 누적 모드
   trailBtn.addEventListener("click", () => {
     trailMode = !trailMode;
     trailBtn.classList.toggle("active", trailMode);
   });
 
-  // 마이크 ON/OFF
   micBtn.addEventListener("click", () => {
     micEnabled = !micEnabled;
-    if (micEnabled) {
-      mic.start();
-      fft.setInput(mic);
-    } else {
-      mic.stop();  // 마이크 완전히 꺼짐
-    }
+    if (micEnabled) { mic.start(); fft.setInput(mic); }
+    else { mic.stop(); }
     updateMicVisual();
   });
 
-  // 클리어
   clearBtn.addEventListener("click", () => background(0));
 }
+
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 
 function draw() {
   if (!trailMode) background(0);
@@ -137,13 +139,10 @@ function draw() {
   noiseOffset += 0.005;
 
   let smoothedAmp, silent;
-
   if (!micEnabled) {
-    // ★ 마이크 OFF: 완전 무음 강제
     smoothedAmp = 0;
     silent = true;
   } else {
-    // 오디오 분석
     let spectrum = fft.analyze();
     let nyquist = sampleRate() / 2;
     centroid = 0;
@@ -169,10 +168,8 @@ function draw() {
   let targetLineY   = silent ? 150  : 0;
   circleOffsetY = lerp(circleOffsetY, targetCircleY, 0.05);
   lineOffsetY   = lerp(lineOffsetY,   targetLineY,   0.05);
-  let targetAlpha  = silent ? 255 : 0;
-  symbolAlpha = lerp(symbolAlpha, targetAlpha, 0.05);
+  symbolAlpha = lerp(symbolAlpha, silent ? 255 : 0, 0.05);
 
-  // 스펙트럼 기반 추가 변수 (마이크가 꺼져있으면 모두 0)
   let bassEnergy = micEnabled ? fft.getEnergy(20, 250) : 0;
   let midEnergy  = micEnabled ? fft.getEnergy(250, 2000) : 0;
   let rawHigh    = micEnabled ? fft.getEnergy(500, 8000) : 0;
@@ -181,17 +178,11 @@ function draw() {
   let spacing   = map(smoothedAmp, 0, 255, 0, 60);
   let numShapes = floor(map(smoothedAmp, 0, 255, 3, 12));
 
-  if (numShapes > 3) {
-    sustainCounter++;
-    if (sustainCounter > 60) sustainW = min(sustainW + 2.5, 600);
-  } else {
-    sustainCounter = 0;
-    sustainW = lerp(sustainW, 0, 0.05);
-  }
+  if (numShapes > 3) { sustainCounter++; if (sustainCounter > 60) sustainW = min(sustainW + 2.5, 600); }
+  else { sustainCounter = 0; sustainW = lerp(sustainW, 0, 0.05); }
 
   translate(width/2, height/2);
 
-  // 무음 시 기호
   if (symbolAlpha > 1) {
     stroke(255, symbolAlpha);
     strokeWeight(2);
